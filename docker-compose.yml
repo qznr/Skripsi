@@ -26,6 +26,7 @@ services:
 
   db:
     image: pgvector/pgvector:pg17-trixie
+    platform: linux/x86_64
     env_file:
       - .env
     volumes:
@@ -35,6 +36,7 @@ services:
 
   tei-embedding:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7.4
+    platform: linux/x86_64
     command:
       - --model-id
       - nomic-ai/nomic-embed-text-v1.5
@@ -53,6 +55,7 @@ services:
 
   tei-reranker:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7.4
+    platform: linux/x86_64
     command:
       - --model-id
       - cross-encoder/ms-marco-MiniLM-L2-v2
