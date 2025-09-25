@@ -8,8 +8,6 @@ services:
       - ./data:/app/data
       - ./schema.sql:/app/schema.sql
       - huggingface_cache:/root/.cache/huggingface
-    ports:
-      - "5001:5000"
     env_file:
       - .env
     networks:
