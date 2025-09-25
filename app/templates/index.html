@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Expert Search - Blind Pairwise Test</title>
+  <style>
+    :root{
+      --text:#111;         /* Color 1 */
+      --accent:#1a73e8;    /* Color 2 */
+    }
+
+    /* Typography & base */
+    html,body{
+      margin:0;
+      padding:0;
+      background:#fff;
+      color:var(--text);
+      font:16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+      text-rendering:optimizeLegibility;
+      -webkit-font-smoothing:antialiased;
+      background-image: radial-gradient(#00000020 1px, transparent 1px);
+      background-size: 20px 20px;
+
+    }
+    .hero-section, .wrap {
+        background-color: rgba(255, 255, 255, 0.9);
+        border-radius: 12px;
+        padding: 48px 20px 72px;
+    }
+    .hero-section {
+        background-color: rgba(255, 255, 255, 0.95);
+        padding: 48px 20px;
+        max-width: 880px;
+        margin: auto;
+    }
+
+
+    .wrap{
+      max-width:880px;
+      margin:0 auto;
+    }
+
+    /* Hero Section */
+    .hero-section {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+    .hero-section h1,
+    .hero-section h2,
+    .hero-section .lead {
+        max-width: 68ch; /* Keep lead paragraph readable width */
+        text-align: center; /* Ensure lead text is centered */
+    }
+
+
+    /* Visual hierarchy */
+    h1{
+      font-size:40px;
+      line-height:1.15;
+      margin:0 0 10px;
+      color:var(--accent);
+      letter-spacing:-0.02em;
+      font-weight:800;
+    }
+    h2{
+      font-size:22px;
+      line-height:1.3;
+      margin:18px 0 8px;
+      color:#111; /* same as text for simplicity */
+      font-weight:700;
+    }
+    p{
+      margin:10px 0;
+      max-width:68ch;
+    }
+    .lead{
+      margin:16px auto 8px;
+    }
+    .hook b{
+      color:var(--accent);
+      font-weight:800;
+    }
+    /* Search area */
+    .search{
+      margin:26px auto 18px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:center;
+    }
+    .search input[type="text"]{
+      width:min(680px, 100%);
+      padding:14px 16px;
+      border:2px solid var(--accent);
+      border-radius:10px;
+      font-size:16px;
+      outline:none;
+    }
+    .search button{
+      padding:14px 18px;
+      border:2px solid var(--accent);
+      background:var(--accent);
+      color:#fff;
+      border-radius:10px;
+      font-weight:700;
+      cursor:pointer;
+    }
+    .search button:focus,
+    .search button:hover{
+      filter:brightness(0.95);
+    }
+    /* Pairwise test section */
+    .test{
+      display: none; /* Hidden by default, shown after search */
+      margin:30px auto 8px;
+      padding:18px 16px;
+      border:2px solid var(--accent);
+      border-radius:12px;
+      background:#fff;
+    }
+    .test h3{
+      margin:0 0 6px;
+      font-size:18px;
+      font-weight:800;
+      color:var(--accent);
+      text-align:center;
+    }
+    .test p{
+      margin:6px auto 12px;
+      text-align:center;
+    }
+    .ab{
+      display:flex;
+      gap:10px;
+      justify-content:center;
+      margin:18px 0 0;
+      padding-top: 18px;
+      border-top: 2px solid #eaeaea;
+      flex-wrap:wrap;
+    }
+    .ab button{
+      min-width:140px;
+      padding:12px 14px;
+      border:2px solid var(--accent);
+      border-radius:10px;
+      background:#fff;
+      color:var(--accent);
+      font-weight:800;
+      cursor:pointer;
+    }
+    .ab button:hover,
+    .ab button:focus{
+      background:var(--accent);
+      color:#fff;
+    }
+    details{
+      margin:20px auto 0;
+      border-top:1px solid #eaeaea;
+      padding-top:12px;
+      max-width:68ch;
+    }
+    summary{
+      cursor:pointer;
+      color:var(--accent);
+      font-weight:800;
+      list-style:none;
+    }
+    summary::-webkit-details-marker{ display:none; }
+    ul{
+      margin:10px 0 0 18px;
+      padding:0;
+    }
+    li{ margin:6px 0; }
+    .note{
+      margin:28px auto 0;
+      font-size:14px;
+      color:#333;
+      max-width:68ch;
+    }
+    
+    /* Styles for the results display */
+    #results-container {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 20px;
+        margin-top: 20px;
+        padding-top: 10px;
+    }
+
+    @media (min-width: 768px) {
+        #results-container {
+            grid-template-columns: 1fr 1fr;
+        }
+    }
+
+    .result-column {
+        padding: 16px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        background: #f9f9f9;
+    }
+    .result-column h3 {
+        margin-top: 0;
+        font-size: 20px;
+        color: var(--text);
+        border-bottom: 2px solid var(--accent);
+        padding-bottom: 8px;
+    }
+    .expert {
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #eee;
+    }
+    .expert:last-child {
+        border-bottom: none;
+    }
+    .expert-name {
+        font-weight: bold;
+        font-size: 18px;
+    }
+    .expert-name a {
+        color: var(--text);
+        text-decoration: none;
+    }
+    .expert-name a:hover {
+        text-decoration: underline;
+        color: var(--accent);
+    }
+    .expert-articles {
+        margin-top: 8px;
+        font-size: 14px;
+    }
+    .expert-articles > details { /* Target only the top-level details */
+        border-top: none;
+        padding-top: 0;
+    }
+    .expert-articles > details > summary {
+        font-weight: normal;
+        color: #444;
+        font-size: 14px;
+    }
+    .expert-articles ul {
+      margin-left: 10px;
+    }
+    .expert-articles li {
+        margin: 8px 0;
+    }
+    .abstract-details {
+        margin: 6px 0 0 0;
+        padding: 0;
+        border: none;
+    }
+    .abstract-details summary {
+        font-size: 13px;
+        color: #555;
+        font-weight: normal;
+    }
+    .abstract-text {
+        font-size: 13px;
+        color: #333;
+        background: #eee;
+        border-radius: 4px;
+        padding: 8px;
+        margin-top: 4px;
+        max-width: 100%;
+    }
+    .loader {
+        text-align: center;
+        font-size: 18px;
+        margin-top: 20px;
+        grid-column: 1 / -1;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-section">
+    <h1>Who are the real experts in your field?</h1>
+    <h2>Finding experts shouldn't feel like guesswork.</h2>
+    <p class="lead hook">
+      Maybe you've searched online and ended up with hundreds of articles, unsure which authors are authoritative or relevant.
+      Or you're starting a project and wondering who to follow or collaborate with.
+      Here, you don't just get articles — you get <b>experts ranked by relevance</b> to your question.
+    </p>
+  </div>
+
+  <main class="wrap">
+    <div class="search" role="search">
+      <input type="text" placeholder="Type a topic or problem (e.g., Impact of microplastics on marine food chains')" aria-label="Search experts" />
+      <button type="button">Search</button>
+    </div>
+
+    <div class="test" aria-live="polite">
+      <h3>Help us improve: choose the better result</h3>
+      <p>After you search, you'll see two expert lists side by side in a blind test. Which one feels more useful?</p>
+
+      <div id="results-container">
+        <!-- Results will be injected here by JavaScript -->
+      </div>
+      
+      <div class="ab" aria-label="Blind pairwise comparison">
+        <button type="button" aria-label="Choose left result (Model A)">Left (Result A)</button>
+        <button type="button" aria-label="Choose the results are of similar quality (Draw)">Draw</button>
+        <button type="button" aria-label="Choose right result (Model B)">Right (Result B)</button>
+      </div>
+    </div>
+
+    <details>
+      <summary>See example queries</summary>
+      <ul>
+        <li>Effect of social media use on youth political participation</li>
+        <li>Role of urban green space in stress reduction for city residents</li>
+        <li>Microplastic concentration and marine food-chain disruption</li>
+      </ul>
+    </details>
+
+    <p class="note">
+      This is an ongoing research prototype. Your A/B choices help evaluate ranking quality. Thank you for contributing!
+    </p>
+  </main>
+  
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const searchInput = document.querySelector('.search input[type="text"]');
+        const searchButton = document.querySelector('.search button');
+        const testContainer = document.querySelector('.test');
+        const resultsContainer = document.getElementById('results-container');
+
+        const performSearch = async () => {
+            const query = searchInput.value.trim();
+            if (!query) {
+                alert('Please enter a topic to search.');
+                return;
+            }
+
+            searchButton.disabled = true;
+            searchButton.textContent = 'Searching...';
+            testContainer.style.display = 'block';
+            resultsContainer.innerHTML = '<div class="loader">Finding experts... This may take a moment.</div>';
+
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: query }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                renderResults(data);
+
+            } catch (error) {
+                console.error('Search failed:', error);
+                resultsContainer.innerHTML = `<div class="loader">An error occurred: ${error.message}. Please try again.</div>`;
+            } finally {
+                searchButton.disabled = false;
+                searchButton.textContent = 'Search';
+            }
+        };
+
+        // Function to reformat "last name, first name" to "first name last name"
+        const formatName = (fullName) => {
+            if (!fullName) return '';
+            const parts = fullName.split(',').map(part => part.trim());
+            if (parts.length > 1) {
+                return `${parts[1]} ${parts[0]}`;
+            }
+            return fullName; // Return as is if format doesn't match
+        };
+
+        const renderResults = (data) => {
+            const modelA = data.model_a;
+            const modelB = data.model_b;
+            resultsContainer.innerHTML = `
+                <div class="result-column" id="model-a-results">
+                    <h3>Result A</h3>
+                    ${modelA.model_name}
+                    ${modelA.experts.map((expert, index) => renderExpert(expert, index)).join('') || '<p>No experts found.</p>'}
+                </div>
+                <div class="result-column" id="model-b-results">
+                    <h3>Result B</h3>
+                    ${modelB.model_name}
+                    ${modelB.experts.map((expert, index) => renderExpert(expert, index)).join('') || '<p>No experts found.</p>'}
+                </div>
+            `;
+        };
+
+        const renderExpert = (expert, index) => {
+            const formattedName = formatName(expert.full_name);
+            return `
+                <div class="expert">
+                    <div class="expert-name">
+                        ${index + 1}. <a href="https://www.scopus.com/authid/detail.uri?authorId=${escapeHTML(expert.scopus_id)}" target="_blank" rel="noopener noreferrer">${escapeHTML(formattedName)}</a>
+                    </div>
+                    <div class="expert-articles">
+                        <details>
+                            <summary>Show ${expert.articles.length} relevant articles</summary>
+                            <ul>
+                                ${expert.articles.map(article => `
+                                    <li>
+                                        <a href="${escapeHTML(article.link)}" target="_blank" rel="noopener noreferrer">${escapeHTML(article.title)}</a> (${article.year})
+                                        <details class="abstract-details">
+                                            <summary>Show Abstract</summary>
+                                            <p class="abstract-text">${escapeHTML(article.abstract) || 'No abstract available.'}</p>
+                                        </details>
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        </details>
+                    </div>
+                </div>
+            `;
+        };
+        
+        const escapeHTML = (str) => {
+            if (!str) return '';
+            const p = document.createElement('p');
+            p.textContent = str;
+            return p.innerHTML;
+        };
+
+        searchButton.addEventListener('click', performSearch);
+        searchInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                performSearch();
+            }
+        });
+    });
+  </script>
+</body>
+</html>

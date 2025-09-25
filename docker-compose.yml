@@ -1,0 +1,81 @@
+services:
+  web:
+    build:
+      context: .
+    command: flask run --host=0.0.0.0 --debug
+    volumes:
+      - ./app:/app
+      - ./data:/app/data
+      - ./schema.sql:/app/schema.sql
+      - huggingface_cache:/root/.cache/huggingface
+    ports:
+      - "5001:5000"
+    env_file:
+      - .env
+    networks:
+      - bthesis_gustav
+    depends_on:
+      - db
+      - tei-embedding
+      - tei-reranker
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web.rule=Host(`bthesis.gustav-ai.dev`)"
+      - "traefik.http.routers.web.entrypoints=websecure"
+      - "traefik.http.routers.web.tls=true"
+      - "traefik.http.routers.web.tls.certresolver=gussysolver"
+      - "traefik.http.services.web.loadbalancer.server.port=5000"
+
+  db:
+    image: pgvector/pgvector:pg17-trixie
+    env_file:
+      - .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    networks:
+      - bthesis_gustav
+
+  tei-embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7.4
+    command:
+      - --model-id
+      - nomic-ai/nomic-embed-text-v1.5
+      - --max-batch-tokens
+      - "128"
+      - --max-client-batch-size
+      - "4"
+      - --auto-truncate 
+    ports:
+      - "8080:80"
+    volumes:
+      - huggingface_cache:/data
+    networks:
+      - bthesis_gustav
+      - tei_net
+
+  tei-reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7.4
+    command:
+      - --model-id
+      - cross-encoder/ms-marco-MiniLM-L2-v2
+      - --max-batch-tokens
+      - "2048"
+      - --max-client-batch-size
+      - "8"
+      - --auto-truncate
+    ports:
+      - "8081:80"
+    volumes:
+      - huggingface_cache:/data
+    networks:
+      - bthesis_gustav
+      - tei_net
+
+volumes:
+  postgres_data:
+  huggingface_cache:
+
+networks:
+  bthesis_gustav:
+  tei_net:
+    name: tei_net

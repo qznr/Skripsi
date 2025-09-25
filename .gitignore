@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Docker
+.dockerignore
+
+# Environment
+.env
+
+# IDE / OS files
+.idea/
+.vscode/
+*.DS_Store
+
+repopack-output.txt
