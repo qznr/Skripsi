@@ -3,17 +3,22 @@ from vectorizer import get_single_embedding, rerank_documents
 from psycopg2.extras import RealDictCursor
 import asyncio
 import random
-import time
 from collections import defaultdict
 
-async def find_experts(query_text: str, dims: int):
+async def find_experts(
+    query_text: str,
+    initial_dims: int,
+    rerank_method: str = 'cross-encoder',
+    shortlist_size: int = 25
+):
     """
-    Orchestrates the process of finding and ranking experts using a reranking step.
-    1.  Vectorizes the query.
-    2.  Executes an initial vector search for the top 100 candidate articles.
-    3.  Reranks the candidates using a dedicated reranker model.
-    4.  Fetches author data for the top reranked articles.
-    5.  Aggregates scores and formats the final results in Python.
+    Orchestrates a two-stage process of finding and ranking experts.
+
+    Args:
+        query_text (str): The user's search query.
+        initial_dims (int): The vector dimension for the fast initial retrieval.
+        rerank_method (str): The method for the second stage ('cross-encoder' or 'vector').
+        shortlist_size (int): The number of candidates for the second stage.
     """
     conn = get_db()
     
@@ -21,29 +26,57 @@ async def find_experts(query_text: str, dims: int):
     prefixed_query = f"search_query: {query_text}"
     query_embedding = await get_single_embedding(prefixed_query)
 
-    # === STEP 2: Initial Candidate Retrieval (Top 100) ===
-    initial_candidates = []
+    # === STEP 2: Initial Candidate Retrieval (Stage 1) ===
+    # Fast retrieval using a lower-dimension index to get a shortlist of IDs.
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         sql_initial_search = f"""
-            SELECT
-                a.article_id, a.title, a.abstract
+            SELECT a.article_id, a.title, a.abstract
             FROM articles a
             WHERE a.embedding IS NOT NULL
-            ORDER BY (sub_vector(a.embedding, {dims})::vector({dims}) <=> sub_vector(%(query_embedding)s::vector, {dims})::vector({dims})) ASC
-            LIMIT 25;
+            ORDER BY (sub_vector(a.embedding, %(initial_dims)s)::vector(%(initial_dims)s) <=> sub_vector(%(query_embedding)s::vector, %(initial_dims)s)::vector(%(initial_dims)s)) ASC
+            LIMIT %(shortlist_size)s;
         """
-        cursor.execute(sql_initial_search, {'query_embedding': query_embedding})
+        cursor.execute(sql_initial_search, {
+            'query_embedding': query_embedding,
+            'initial_dims': initial_dims,
+            'shortlist_size': shortlist_size
+        })
         initial_candidates = cursor.fetchall()
 
     if not initial_candidates:
         return []
 
-    # === STEP 3: Rerank the Top 100 Candidates ===
-    # We pass the original user query (without prefix) to the reranker
-    reranked_results = await rerank_documents(query_text, initial_candidates)
+    # === STEP 3: Reranking (Stage 2) ===
+    score_map = {}
+    top_ranked_ids = []
+
+    if rerank_method == 'cross-encoder':
+        # Rerank the small shortlist using the powerful cross-encoder model.
+        reranked_results = await rerank_documents(query_text, initial_candidates)
+        top_ranked_ids = [result['id'] for result in reranked_results]
+        score_map = {result['id']: result['score'] for result in reranked_results}
     
-    top_reranked_ids = [result['id'] for result in reranked_results]
-    score_map = {result['id']: result['score'] for result in reranked_results}
+    elif rerank_method == 'vector':
+        # Rerank the larger shortlist using precise, full-dimension vector similarity.
+        candidate_ids = [doc['article_id'] for doc in initial_candidates]
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            sql_rerank = """
+                SELECT
+                    article_id,
+                    1 - (embedding <=> %(query_embedding)s::vector(768)) AS similarity_score
+                FROM articles
+                WHERE article_id = ANY(%(candidate_ids)s)
+                ORDER BY similarity_score DESC;
+            """
+            cursor.execute(sql_rerank, {
+                'query_embedding': query_embedding,
+                'candidate_ids': candidate_ids
+            })
+            reranked_docs = cursor.fetchall()
+            top_ranked_ids = [doc['article_id'] for doc in reranked_docs]
+            score_map = {doc['article_id']: doc['similarity_score'] for doc in reranked_docs}
+    else:
+        raise ValueError(f"Unknown rerank_method: '{rerank_method}'")
     
     # === STEP 4: Fetch Author and Article Data for Aggregation ===
     author_contributions = []
@@ -58,7 +91,7 @@ async def find_experts(query_text: str, dims: int):
             JOIN authors au ON aa.author_id = au.author_id
             WHERE a.article_id = ANY(%(article_ids)s);
         """
-        cursor.execute(sql_fetch_details, {'article_ids': top_reranked_ids})
+        cursor.execute(sql_fetch_details, {'article_ids': top_ranked_ids})
         author_contributions = cursor.fetchall()
 
     # === STEP 5: Aggregate Scores in Python ===
@@ -70,7 +103,6 @@ async def find_experts(query_text: str, dims: int):
         author_id = contrib['author_id']
         article_id = contrib['article_id']
         
-        # Store author info once
         if author_id not in expert_info:
             expert_info[author_id] = {
                 'author_id': author_id,
@@ -78,7 +110,6 @@ async def find_experts(query_text: str, dims: int):
                 'scopus_id': contrib['scopus_id']
             }
         
-        # Calculate weighted score based on author order and rerank score
         normalized_score = score_map.get(article_id, 0)
         author_order_weight = 1.0
         order = contrib['author_order']
@@ -89,21 +120,19 @@ async def find_experts(query_text: str, dims: int):
         weighted_score = normalized_score * author_order_weight
         expert_scores[author_id] += weighted_score
 
-        # Append article details to the author's list
         expert_articles[author_id].append({
             'article_id': article_id,
             'title': contrib['title'],
             'year': contrib['year'],
             'source_title': contrib['source_title'],
             'link': contrib['link'],
-            'similarity_score': normalized_score, # Use the reranked score
+            'similarity_score': normalized_score,
             'abstract': contrib['abstract']
         })
 
     # === STEP 6: Format Final Results ===
     final_results = []
     for author_id, total_score in expert_scores.items():
-        # Sort articles for each expert by similarity score
         sorted_articles = sorted(expert_articles[author_id], key=lambda x: x['similarity_score'], reverse=True)
         
         author_data = expert_info[author_id]
@@ -111,7 +140,6 @@ async def find_experts(query_text: str, dims: int):
         author_data['articles'] = sorted_articles
         final_results.append(author_data)
 
-    # Sort experts by their total score and take the top 5
     final_results.sort(key=lambda x: x['expert_score'], reverse=True)
     
     return final_results[:5]
@@ -119,11 +147,9 @@ async def find_experts(query_text: str, dims: int):
 
 async def run_pairwise_search(query_text: str):
     """
-    Orchestrates a pairwise search for experts.
-    1. Fetches all available models from the DB.
-    2. Randomly selects two different models.
-    3. Concurrently runs find_experts for each model.
-    4. Returns a structured dictionary with both results.
+    Orchestrates a pairwise search comparing two randomly selected retrieval models.
+    Both models use the same powerful cross-encoder reranking stage to ensure
+    that the primary variable being tested is the quality of the initial retrieval.
     """
     conn = get_db()
     
@@ -142,10 +168,20 @@ async def run_pairwise_search(query_text: str):
     except (ValueError, IndexError):
         raise ValueError("Model name format is incorrect. Expected format like '256_dim'.")
 
-    results_a_task = find_experts(query_text, dims_a)
-    results_b_task = find_experts(query_text, dims_b)
+    task_a = find_experts(
+        query_text=query_text,
+        initial_dims=dims_a,
+        rerank_method='vector',
+        shortlist_size=100
+    )
+    task_b = find_experts(
+        query_text=query_text,
+        initial_dims=dims_b,
+        rerank_method='vector',
+        shortlist_size=100
+    )
     
-    results_a, results_b = await asyncio.gather(results_a_task, results_b_task)
+    results_a, results_b = await asyncio.gather(task_a, task_b)
 
     return {
         "model_a": {
