@@ -2,41 +2,35 @@ services:
   web:
     build:
       context: .
-    command: flask run --host=0.0.0.0 --debug
     volumes:
-      - ./app:/app
-      - ./data:/app/data
-      - ./schema.sql:/app/schema.sql
+      # In production, application code should be baked into the image, not mounted as a volume.
+      # This ensures consistency and prevents accidental changes.
+      # - ./app:/app # Remove for production
+      # - ./data:/app/data # Data should be copied into the image if it's static, or handled via external storage.
+      # - ./schema.sql:/app/schema.sql # Schema should be applied by the application on startup or via migrations.
       - huggingface_cache:/root/.cache/huggingface
     env_file:
       - .env
     networks:
       - bthesis_gustav
+      - proxy
     depends_on:
       - db
       - tei-embedding
       - tei-reranker
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.web.rule=Host(`bthesis.gustav-ai.dev`)"
-      - "traefik.http.routers.web.entrypoints=websecure"
-      - "traefik.http.routers.web.tls=true"
-      - "traefik.http.routers.web.tls.certresolver=gussysolver"
-      - "traefik.http.services.web.loadbalancer.server.port=5000"
 
   db:
     image: pgvector/pgvector:pg17-trixie
-    platform: linux/x86_64
     env_file:
       - .env
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     networks:
       - bthesis_gustav
+    restart: always
 
   tei-embedding:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7.4
-    platform: linux/x86_64
     command:
       - --model-id
       - nomic-ai/nomic-embed-text-v1.5
@@ -45,17 +39,15 @@ services:
       - --max-client-batch-size
       - "4"
       - --auto-truncate 
-    ports:
-      - "8080:80"
     volumes:
       - huggingface_cache:/data
     networks:
       - bthesis_gustav
       - tei_net
+    restart: always # Add restart policy for production
 
   tei-reranker:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7.4
-    platform: linux/x86_64
     command:
       - --model-id
       - cross-encoder/ms-marco-MiniLM-L2-v2
@@ -64,13 +56,12 @@ services:
       - --max-client-batch-size
       - "8"
       - --auto-truncate
-    ports:
-      - "8081:80"
     volumes:
       - huggingface_cache:/data
     networks:
       - bthesis_gustav
       - tei_net
+    restart: always
 
 volumes:
   postgres_data:
@@ -80,3 +71,5 @@ networks:
   bthesis_gustav:
   tei_net:
     name: tei_net
+  proxy:
+    external: true
