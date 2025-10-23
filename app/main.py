@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request, render_template
 from db import get_db
 import asyncio
-from services import find_experts, run_pairwise_search
+from services import find_experts, run_pairwise_search, record_preference
 
 bp = Blueprint('main', __name__)
 
@@ -97,4 +97,33 @@ def search_experts_pairwise():
         return jsonify({
             "status": "error",
             "message": f"An internal error occurred: {str(e)}"
+        }), 500
+    
+@bp.route('/preference', methods=['POST'])
+def record_user_preference():
+    """
+    API endpoint for recording the user's pairwise preference (A, B, or Draw).
+    """
+    data = request.get_json()
+    
+    required_fields = ['evaluation_id', 'choice']
+    if not all(field in data for field in required_fields):
+        return jsonify({"error": "Missing required fields: evaluation_id or choice"}), 400
+
+    evaluation_id = data['evaluation_id']
+    choice = data['choice'].lower() # 'a', 'b', or 'draw'
+
+    if choice not in ['a', 'b', 'draw']:
+        return jsonify({"error": "Invalid choice. Must be 'a', 'b', or 'draw'"}), 400
+
+    try:
+        # Call service layer to update the database
+        record_preference(evaluation_id, choice)
+        return jsonify({"status": "success", "message": f"Preference '{choice}' recorded for evaluation {evaluation_id}"})
+
+    except Exception as e:
+        print(f"An error occurred while recording preference: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "An internal error occurred while saving preference."
         }), 500

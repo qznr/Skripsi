@@ -298,3 +298,48 @@ def add_models_command():
     except Exception as e:
         click.echo(f"An error occurred: {e}")
         db_conn.rollback()
+
+@bp.cli.command('upgrade-schema')
+def upgrade_schema_command():
+    """Adds new tables and refactors existing tables non-destructively."""
+    db_conn = get_db()
+    
+    new_tables_sql = """
+    CREATE TABLE IF NOT EXISTS articles_expert_results (
+        article_expert_result_id SERIAL PRIMARY KEY,
+        expert_result_id INT REFERENCES expert_results(result_id),
+        article_id INT REFERENCES articles(article_id),
+        similarity_score FLOAT NOT NULL,
+        UNIQUE (expert_result_id, article_id)
+    );
+    """
+    
+    refactor_eval_sql = """
+    DO $$
+    BEGIN
+        ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS latency_a JSONB;
+        ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS latency_b JSONB;
+        
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='evaluation_results' AND column_name='latency_a' AND data_type='double precision') THEN
+             ALTER TABLE evaluation_results DROP COLUMN latency_a;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='evaluation_results' AND column_name='latency_b' AND data_type='double precision') THEN
+             ALTER TABLE evaluation_results DROP COLUMN latency_b;
+        END IF;
+
+        ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS preference_submitted BOOLEAN DEFAULT FALSE;
+        
+    END
+    $$;
+    """
+    
+    try:
+        with db_conn.cursor() as cursor:
+            cursor.execute(new_tables_sql)
+            cursor.execute(refactor_eval_sql)
+            
+        db_conn.commit()
+        click.echo('Successfully upgraded database schema.')
+    except Exception as e:
+        click.echo(f"An error occurred during schema upgrade: {e}")
+        db_conn.rollback()

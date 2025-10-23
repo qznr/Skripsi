@@ -1,4 +1,4 @@
-DROP TABLE IF EXISTS expert_results, evaluation_results, models, queries, articles_authors, authors, articles CASCADE;
+DROP TABLE IF EXISTS expert_results, articles_expert_results, evaluation_results, models, queries, articles_authors, authors, articles CASCADE;
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE articles (
@@ -54,9 +54,10 @@ CREATE TABLE evaluation_results (
     model_a_id INT REFERENCES models(model_id),
     model_b_id INT REFERENCES models(model_id),
     winner_model_id INT REFERENCES models(model_id),
-    latency_a FLOAT NOT NULL,
-    latency_b FLOAT NOT NULL,
+    latency_a JSONB,
+    latency_b JSONB,
     results_identical BOOLEAN DEFAULT FALSE,
+    preference_submitted BOOLEAN DEFAULT FALSE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -65,4 +66,12 @@ CREATE TABLE expert_results (
     evaluation_id INT REFERENCES evaluation_results(evaluation_id),
     author_id INT REFERENCES authors(author_id),
     rank_position INT NOT NULL
+);
+
+CREATE TABLE articles_expert_results (
+    article_expert_result_id SERIAL PRIMARY KEY,
+    expert_result_id INT REFERENCES expert_results(result_id),
+    article_id INT REFERENCES articles(article_id),
+    similarity_score FLOAT NOT NULL,
+    UNIQUE (expert_result_id, article_id)
 );
