@@ -304,6 +304,7 @@ def upgrade_schema_command():
     """Adds new tables and refactors existing tables non-destructively."""
     db_conn = get_db()
     
+    # 1. Original Table Upgrades
     new_tables_sql = """
     CREATE TABLE IF NOT EXISTS articles_expert_results (
         article_expert_result_id SERIAL PRIMARY KEY,
@@ -314,6 +315,7 @@ def upgrade_schema_command():
     );
     """
     
+    # 2. Latency Refactoring & Preference Flag
     refactor_eval_sql = """
     DO $$
     BEGIN
@@ -328,18 +330,25 @@ def upgrade_schema_command():
         END IF;
 
         ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS preference_submitted BOOLEAN DEFAULT FALSE;
-        
     END
     $$;
+    """
+
+    # 3. LLM Benchmarking Columns
+    llm_columns_sql = """
+    ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS evaluator_type VARCHAR(50) DEFAULT 'human';
+    ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS evaluator_model VARCHAR(100);
+    ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS reasoning TEXT;
     """
     
     try:
         with db_conn.cursor() as cursor:
+            click.echo('Running schema upgrades...')
             cursor.execute(new_tables_sql)
             cursor.execute(refactor_eval_sql)
+            cursor.execute(llm_columns_sql)
             
         db_conn.commit()
-        click.echo('Successfully upgraded database schema.')
     except Exception as e:
         click.echo(f"An error occurred during schema upgrade: {e}")
         db_conn.rollback()
