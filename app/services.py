@@ -37,10 +37,11 @@ async def find_experts(
     start_step2 = time.perf_counter()
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         sql_initial_search = f"""
-            SELECT a.article_id, a.title, a.abstract
+            SELECT a.article_id, a.title, a.abstract,
+                   (sub_vector(a.embedding, %(initial_dims)s)::vector(%(initial_dims)s) <=> sub_vector(%(query_embedding)s::vector, %(initial_dims)s)::vector(%(initial_dims)s)) AS raw_distance
             FROM articles a
             WHERE a.embedding IS NOT NULL
-            ORDER BY (sub_vector(a.embedding, %(initial_dims)s)::vector(%(initial_dims)s) <=> sub_vector(%(query_embedding)s::vector, %(initial_dims)s)::vector(%(initial_dims)s)) ASC
+            ORDER BY raw_distance ASC  -- Index-friendly ordering
             LIMIT %(shortlist_size)s;
         """
         cursor.execute(sql_initial_search, {
@@ -88,7 +89,7 @@ async def find_experts(
         # We need to calculate the final similarity score (which is just the initial score)
         # and set the top_ranked_ids/score_map based on the initial retrieval.
         top_ranked_ids = [doc['article_id'] for doc in initial_candidates]
-        score_map = {doc['article_id']: doc['similarity_score_initial'] for doc in initial_candidates}
+        score_map = {doc['article_id']: doc['raw_distance'] for doc in initial_candidates}
 
     # === STEP 4: Fetch Author and Article Data for Aggregation ===
     start_step4 = time.perf_counter()
@@ -197,13 +198,11 @@ async def run_pairwise_search(query_text: str):
     task_a = find_experts(
         query_text=query_text,
         initial_dims=dims_a,
-        rerank_method='vector',
         shortlist_size=100
     )
     task_b = find_experts(
         query_text=query_text,
         initial_dims=dims_b,
-        rerank_method='vector',
         shortlist_size=100
     )
     
