@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+  <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+
+  <title>Admin Dashboard - Expert Search</title>
+  <style>
+    :root{
+      --text:#111;
+      --accent:#1a73e8;
+    }
+    html,body{
+      margin:0; padding:0; background:#fff; color:var(--text);
+      font:16px/1.6 system-ui, -apple-system, sans-serif;
+      background-image: radial-gradient(#00000020 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 40px auto;
+      background-color: rgba(255, 255, 255, 0.95);
+      border-radius: 12px;
+      padding: 30px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    h1 { color: var(--accent); margin-top: 0; }
+    .header-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #eaeaea;
+      padding-bottom: 15px;
+      margin-bottom: 20px;
+    }
+    .stats { font-weight: bold; color: #555; }
+    .btn {
+      padding: 10px 18px; border: 2px solid var(--accent);
+      background: var(--accent); color: #fff;
+      border-radius: 8px; font-weight: 700; cursor: pointer;
+      text-decoration: none; display: inline-block;
+    }
+    .btn:hover { filter: brightness(0.95); }
+    table {
+      width: 100%; border-collapse: collapse; font-size: 14px;
+    }
+    th, td {
+      padding: 12px; text-align: left; border-bottom: 1px solid #ddd;
+    }
+    th { background-color: #f1f3f4; font-weight: bold; }
+    tr:hover { background-color: #f9f9f9; }
+    .badge-win { color: green; font-weight: bold; }
+    .badge-draw { color: orange; font-weight: bold; }
+    .badge-none { color: #999; font-style: italic; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header-actions">
+      <div>
+        <h1>Evaluation Data Dashboard</h1>
+        <div class="stats">Total Submitted Votes: {{ total_votes }}</div>
+      </div>
+      <a href="/admin/export" class="btn">⬇ Download CSV</a>
+    </div>
+
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Date</th>
+            <th>Query</th>
+            <th>Model A (Lat)</th>
+            <th>Model B (Lat)</th>
+            <th>Identical?</th>
+            <th>Outcome</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in evaluations %}
+          <tr>
+            <td>{{ e.evaluation_id }}</td>
+            <td>{{ e.created_at.strftime('%Y-%m-%d %H:%M') if e.created_at else '' }}</td>
+            <td><strong>{{ e.query_text }}</strong></td>
+            <td>{{ e.model_a }} <br><small>({{ "%.3f"|format(e.latency_a_sec) }}s)</small></td>
+            <td>{{ e.model_b }} <br><small>({{ "%.3f"|format(e.latency_b_sec) }}s)</small></td>
+            <td>{{ 'Yes' if e.results_identical else 'No' }}</td>
+            <td>
+              {% if e.winner == 'Draw' %}
+                <span class="badge-draw">Draw</span>
+              {% elif e.winner == 'Not Voted' %}
+                <span class="badge-none">Not Voted</span>
+              {% else %}
+                <span class="badge-win">{{ e.winner }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="7" style="text-align: center;">No evaluation data found yet.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script>
+    $(document).ready(function() {
+      $('table').DataTable({
+        "order": [[ 1, "desc" ]], // Sort by date by default
+        "pageLength": 25          // Show 25 rows at a time
+      });
+    });
+  </script>  
+</body>
+</html>

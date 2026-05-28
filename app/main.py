@@ -1,7 +1,12 @@
-from flask import Blueprint, jsonify, request, render_template
+import os
+import csv
+import io
+from functools import wraps
+from flask import Blueprint, jsonify, request, render_template, Response
 from db import get_db
 import asyncio
 from services import find_experts, run_pairwise_search, record_preference
+from psycopg2.extras import RealDictCursor
 
 bp = Blueprint('main', __name__)
 
@@ -127,3 +132,107 @@ def record_user_preference():
             "status": "error",
             "message": "An internal error occurred while saving preference."
         }), 500
+
+
+# ==========================================
+# ADMIN SECURE AREA
+# ==========================================
+
+def check_auth(username, password):
+    """Check if a username / password combination is valid."""
+    admin_user = os.environ.get('ADMIN_USER', 'admin')
+    admin_pass = os.environ.get('ADMIN_PASS', 'admin')
+    return username == admin_user and password == admin_pass
+
+def authenticate():
+    """Sends a 401 response that enables basic auth"""
+    return Response(
+        'Could not verify your access level for that URL.\n'
+        'You have to login with proper credentials', 401,
+        {'WWW-Authenticate': 'Basic realm="Admin Area"'})
+
+def requires_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return authenticate()
+        return f(*args, **kwargs)
+    return decorated
+
+def get_denormalized_evaluations():
+    """Helper function to fetch the flattened evaluation data."""
+    conn = get_db()
+    query = """
+        SELECT 
+            e.evaluation_id,
+            q.query_text,
+            ma.model_name AS model_a,
+            mb.model_name AS model_b,
+            CAST(e.latency_a->>'total_search_time' AS FLOAT) AS latency_a_sec,
+            CAST(e.latency_b->>'total_search_time' AS FLOAT) AS latency_b_sec,
+            e.results_identical,
+            e.preference_submitted,
+            CASE 
+                WHEN e.preference_submitted = FALSE THEN 'Not Voted'
+                WHEN e.winner_model_id IS NULL THEN 'Draw'
+                ELSE mw.model_name 
+            END as winner,
+            e.created_at
+        FROM evaluation_results e
+        JOIN queries q ON e.query_id = q.query_id
+        JOIN models ma ON e.model_a_id = ma.model_id
+        JOIN models mb ON e.model_b_id = mb.model_id
+        LEFT JOIN models mw ON e.winner_model_id = mw.model_id
+        ORDER BY e.created_at DESC;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(query)
+        return cursor.fetchall()
+
+@bp.route('/admin')
+@requires_auth
+def admin_dashboard():
+    """Renders the HTML table of the evaluation data."""
+    evaluations = get_denormalized_evaluations()
+    
+    total_votes = sum(1 for e in evaluations if e['preference_submitted'])
+    
+    return render_template('admin.html', evaluations=evaluations, total_votes=total_votes)
+
+@bp.route('/admin/export')
+@requires_auth
+def export_csv():
+    """Generates and downloads the data as a CSV file."""
+    evaluations = get_denormalized_evaluations()
+    
+    # Create an in-memory string buffer
+    si = io.StringIO()
+    cw = csv.writer(si)
+    
+    # Write the header
+    cw.writerow([
+        'Evaluation ID', 'Created At', 'Query', 'Model A', 'Model B', 
+        'Latency A (s)', 'Latency B (s)', 'Results Identical', 
+        'Preference Submitted', 'Winner'
+    ])
+    
+    # Write the data rows
+    for e in evaluations:
+        cw.writerow([
+            e['evaluation_id'],
+            e['created_at'],
+            e['query_text'],
+            e['model_a'],
+            e['model_b'],
+            round(e['latency_a_sec'], 4) if e['latency_a_sec'] else '',
+            round(e['latency_b_sec'], 4) if e['latency_b_sec'] else '',
+            e['results_identical'],
+            e['preference_submitted'],
+            e['winner']
+        ])
+    
+    # Return the generated CSV as a downloadable file
+    output = Response(si.getvalue(), mimetype='text/csv')
+    output.headers["Content-Disposition"] = "attachment; filename=evaluations_export.csv"
+    return output
