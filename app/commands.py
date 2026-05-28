@@ -12,10 +12,101 @@ from tqdm import tqdm
 from services import find_experts, save_evaluation_results
 from vectorizer import get_embeddings, get_single_embedding
 import itertools
-from llm_judge import evaluate_with_gemini, MODEL_NAME
+from llm_judge import client, evaluate_with_gemini, MODEL_NAME
 import time
 
 bp = Blueprint('commands', __name__)
+
+@bp.cli.command('generate-benchmark-queries')
+def generate_benchmark_queries_command():
+    """Generates 100 problem-solving queries based on the top-cited papers in the database."""
+    conn = get_db()
+    
+    # 1. Fetch top 100 cited papers that have abstracts
+    query_fetch = """
+        SELECT eid, title, abstract 
+        FROM articles 
+        WHERE abstract IS NOT NULL AND title IS NOT NULL
+        ORDER BY cited_by DESC 
+        LIMIT 100;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(query_fetch)
+        papers = cursor.fetchall()
+
+    if not papers:
+        click.echo("Error: No articles found in the database. Make sure you imported data first.")
+        return
+
+    benchmark_data = []
+    click.echo(f"Found {len(papers)} anchor papers. Generating queries...")
+    
+    for i, paper in enumerate(papers):
+        title = paper['title']
+        abstract = paper['abstract']
+        eid = paper['eid']
+        
+        prompt = f"""
+        Analyze this academic paper's Title and Abstract. 
+        Identify the core PRACTICAL PROBLEM or BOTTLENECK that this paper is trying to solve. 
+        
+        Write a short, natural-language "Expert-Seeking" query from the perspective of an engineer or project leader who needs a human expert/collaborator to help them solve that exact problem.
+
+        Title: "{title}"
+        Abstract: "{abstract}"
+
+        EXAMPLES of the exact style and tone I need:
+        - "Who can help me design a wideband patch antenna?"
+        - "Who is actively researching microplastic toxicity in marine biology?"
+        - "I need a specialist in deep learning for medical image segmentation to join my team."
+
+        Generate exactly ONE natural-language, problem-solving, expert-seeking query based on the paper. 
+        Your output must contain ONLY the query string, without quotes, introductory text, or explanations.
+        """
+
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt
+            )
+            # Clean up the output string
+            query_text = response.text.strip().replace('"', '')
+            
+            # Save the query AND link it to the source paper for your appendix!
+            benchmark_data.append({
+                "id": i + 1,
+                "anchor_paper_eid": eid,
+                "anchor_paper_title": title,
+                "query": query_text
+            })
+            click.echo(f"[{i+1}/100] Generated: '{query_text}' (EID: {eid})")
+            
+            # Stay within rate limits
+            time.sleep(3)
+            
+        except Exception as e:
+            click.echo(f"Error generating query for EID {eid}: {e}")
+            # Fallback if API fails
+            benchmark_data.append({
+                "id": i + 1,
+                "anchor_paper_eid": eid,
+                "anchor_paper_title": title,
+                "query": f"Expert in {title[:100]}"
+            })
+
+    # Save to JSON
+    output_path = '/app/data/benchmark_queries_linked.json'
+    with open(output_path, 'w') as f:
+        json.dump(benchmark_data, f, indent=2)
+        
+    # Also write a clean list of just the queries for your runner
+    queries_clean = [item["query"] for item in benchmark_data]
+    with open('/app/data/benchmark_queries.json', 'w') as f:
+        json.dump(queries_clean, f, indent=2)
+
+    click.echo(f"\nSuccess! Generated 100 queries.")
+    click.echo(f"Linked data saved to: {output_path}")
+    click.echo(f"Clean query list saved to: /app/data/benchmark_queries.json")
 
 @bp.cli.command('init-db')
 def init_db_command():
