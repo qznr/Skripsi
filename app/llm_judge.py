@@ -13,13 +13,14 @@ MODEL_NAME = "gemini-3.5-flash"
 def format_experts_for_prompt(experts_list):
     """Formats the expert list into a readable string for the LLM."""
     formatted = ""
-    for i, expert in enumerate(experts_list):
+    for i, expert in enumerate(experts_list[:3]):
         formatted += f"Expert {i+1}: {expert['full_name']}\n"
         formatted += f"Total Expert Score: {expert['expert_score']:.2f}\n"
-        for j, article in enumerate(expert['articles']):
-            formatted += f"  - Article: {article['title']} ({article['year']})\n"
+
+        for article in expert['articles'][:3]:
+            formatted += f"  - [{article['year']}] {article['title']}\n"
             formatted += f"    Citations: {article['cited_by']}\n"
-            formatted += f"    Abstract: {article['abstract']}\n"
+            formatted += f"    Abstract snippet: {article['abstract'][:300]}...\n"
         formatted += "\n"
     return formatted
 
@@ -37,9 +38,34 @@ def evaluate_with_gemini(query, results_a, results_b):
     === LIST B ===
     {format_experts_for_prompt(results_b)}
     
-    Analyze the relevance of the articles to the query, the authority of the authors (citations), and the overall quality of the match.
-    Which list is better? Choose 'a', 'b', or 'draw' if they are equally good.
-    
+    EVALUATION CRITERIA (Evaluate in order of priority):
+
+    1. DIRECT SEMANTIC RELEVANCE (Highest Priority)
+       - Look at the article titles and abstracts for the experts in both lists.
+       - A list is BETTER if its experts have published papers that directly and specifically address the query topic.
+       - Penalize lists containing "generalists" whose papers only tangentially mention the topic compared to "specialists" whose papers are highly focused on the query.
+
+    2. TOP-HEAVY ALIGNMENT
+       - Pay closest attention to the Expert #1 and Expert #2 spots.
+       - The absolute best, most highly-specific expert must be at the very top of the list (Rank 1). 
+       - If List A has a better Rank 1 expert than List B, List A is the winner, even if List B's 3rd expert is slightly better.
+
+    3. ACADEMIC AUTHORITY & CITATION WEIGHT (Tie-Breaker)
+       - If both lists contain experts with similar semantic relevance, look at the citation counts ("Citations:") of their papers.
+       - An expert with highly cited papers in the query's niche represents greater academic authority and is a better recommendation.
+
+    4. COHERENCE OF THE LIST
+       - Evaluate if all 3 experts belong to the same scientific community related to the query, or if the list contains random, unrelated authors. A coherent list of peers is better.
+
+    DECISION LOGIC:
+    - Choose 'a' if List A is superior based on the criteria above.
+    - Choose 'b' if List B is superior based on the criteria above.
+    - Choose 'draw' ONLY if:
+      a) Both lists are of equally high, excellent quality.
+      b) Both lists are completely irrelevant to the query (i.e., no experts in either list have any relation to the query topic).
+
+    OUTPUT FORMAT:
+
     You MUST respond in strict JSON format like this:
     {{"choice": "a", "reasoning": "Brief explanation of why A is better."}}
     """

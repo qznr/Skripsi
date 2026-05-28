@@ -8,17 +8,13 @@ import time
 import json
 
 async def find_experts(
-    query_text: str,
+    query_embedding: list, # Changed from query_text: str
     initial_dims: int,
-    shortlist_size: int = 25
+    shortlist_size: int = 25,
+    embedding_latency: float = 0.0 # Pass the pre-calculated latency
 ):
     """
-    Orchestrates a two-stage process of finding and ranking experts.
-
-    Args:
-        query_text (str): The user's search query.
-        initial_dims (int): The vector dimension for the fast initial retrieval.
-        shortlist_size (int): The number of candidates for the second stage.
+    Orchestrates a two-stage process of finding and ranking experts using a pre-calculated embedding.
     """
     conn = get_db()
     latency_metrics = {}
@@ -26,14 +22,10 @@ async def find_experts(
     # Check if reranking is needed
     perform_reranking = (initial_dims != 768)
 
-    # === STEP 1: Get Query Embedding ===
-    start_step1 = time.perf_counter()
-    prefixed_query = f"search_query: {query_text}"
-    query_embedding = await get_single_embedding(prefixed_query)
-    latency_metrics['step1_embedding'] = time.perf_counter() - start_step1
+    # === STEP 1: Get Query Embedding (PASSED IN) ===
+    latency_metrics['step1_embedding'] = embedding_latency
 
     # === STEP 2: Initial Candidate Retrieval (Stage 1) ===
-    # Fast retrieval using a lower-dimension index to get a shortlist of IDs.
     start_step2 = time.perf_counter()
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         sql_initial_search = f"""
@@ -168,45 +160,40 @@ async def find_experts(
     return final_results[:5], latency_metrics
 
 async def run_pairwise_search(query_text: str):
-    """
-    Orchestrates a pairwise search comparing two randomly selected retrieval models.
-    Saves detailed, granular results and latency metrics to the database.
-    """
     conn = get_db()
     
-    # 0. Get Query Embedding (needed for saving to DB)
+    # 0. Get Query Embedding exactly ONCE
+    start_step1 = time.perf_counter()
     prefixed_query = f"search_query: {query_text}"
     query_embedding = await get_single_embedding(prefixed_query)
+    emb_latency = time.perf_counter() - start_step1
     
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute("SELECT model_id, model_name FROM models;")
         all_models = cursor.fetchall()
 
     if len(all_models) < 2:
-        raise ValueError("Not enough models configured for a pairwise test. At least 2 are required.")
+        raise ValueError("Not enough models configured for a pairwise test.")
     
-    # Randomly select two models
     model_a_data, model_b_data = random.sample(all_models, 2)
     
-    try:
-        dims_a = int(model_a_data['model_name'].split('_')[0])
-        dims_b = int(model_b_data['model_name'].split('_')[0])
-    except (ValueError, IndexError):
-        raise ValueError("Model name format is incorrect. Expected format like '256_dim'.")
+    dims_a = int(model_a_data['model_name'].split('_')[0])
+    dims_b = int(model_b_data['model_name'].split('_')[0])
 
-    # Run tasks concurrently
+    # Run tasks concurrently, sharing the same query_embedding and latency
     task_a = find_experts(
-        query_text=query_text,
+        query_embedding=query_embedding,
         initial_dims=dims_a,
-        shortlist_size=100
+        shortlist_size=100,
+        embedding_latency=emb_latency
     )
     task_b = find_experts(
-        query_text=query_text,
+        query_embedding=query_embedding,
         initial_dims=dims_b,
-        shortlist_size=100
+        shortlist_size=100,
+        embedding_latency=emb_latency
     )
     
-    # Await both tasks. The results are tuples: (results, metrics)
     results_a_tuple, results_b_tuple = await asyncio.gather(task_a, task_b)
     results_a, metrics_a = results_a_tuple
     results_b, metrics_b = results_b_tuple

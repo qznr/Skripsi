@@ -378,8 +378,10 @@ async def _run_benchmark():
     
     for q_idx, query_text in enumerate(queries):
         # Prefetch Query Embedding
+        start_emb = time.perf_counter()
         prefixed_query = f"search_query: {query_text}"
         query_embedding = await get_single_embedding(prefixed_query)
+        emb_latency = time.perf_counter() - start_emb
         
         print(f"\n=======================================================")
         print(f"Testing [{q_idx+1}/{len(queries)}] Query: '{query_text}'")
@@ -396,10 +398,11 @@ async def _run_benchmark():
         
         for model in all_models:
             dims = int(model['model_name'].split('_')[0])
-            res, met = await find_experts(query_text, dims, 100)
+            res, met = await find_experts(query_embedding, dims, 100, emb_latency)
             
             query_results_cache[model['model_id']] = res
             query_metrics_cache[model['model_id']] = met
+            time.sleep(1) 
             
         # ---------------------------------------------------------
         # STEP 2: GEMINI JUDGING (Using the isolated data)
@@ -457,6 +460,7 @@ async def _run_benchmark():
                         (winner_id, eval_id)
                     )
                 conn.commit()
+            time.sleep(5)
 
     print("\nBenchmark Process Finished.")
 

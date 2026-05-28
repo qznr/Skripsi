@@ -7,6 +7,7 @@ from db import get_db
 import asyncio
 from services import find_experts, run_pairwise_search, record_preference
 from psycopg2.extras import RealDictCursor
+from vectorizer import get_single_embedding
 
 bp = Blueprint('main', __name__)
 
@@ -56,9 +57,6 @@ def db_check():
 
 @bp.route('/query', methods=['POST'])
 def query_experts():
-    """
-    API endpoint for querying experts. Handles request/response and calls the service layer.
-    """
     data = request.get_json()
     if not data or 'query' not in data:
         return jsonify({"error": "Missing 'query' in request body"}), 400
@@ -70,12 +68,22 @@ def query_experts():
         return jsonify({"error": "Invalid 'dims'. Must be an integer between 1 and 768."}), 400
 
     try:
-        # Call the business logic from the service layer
-        results = asyncio.run(find_experts(query_text, dims))
+        # Calculate the embedding and time it
+        import time
+        start = time.perf_counter()
+        prefixed_query = f"search_query: {query_text}"
+        
+        # Run async functions in Flask
+        loop = asyncio.get_event_loop()
+        query_embedding = loop.run_until_complete(get_single_embedding(prefixed_query))
+        emb_latency = time.perf_counter() - start
+        
+        results, latency = loop.run_until_complete(
+            find_experts(query_embedding, dims, embedding_latency=emb_latency)
+        )
         return jsonify(results)
 
     except Exception as e:
-        # Log the exception for debugging
         print(f"An error occurred during the query process: {e}")
         return jsonify({
             "status": "error",
@@ -201,7 +209,7 @@ def get_denormalized_evaluations():
                 JOIN authors au ON er.author_id = au.author_id
                 WHERE er.evaluation_id = e.evaluation_id
             ) AS experts_list
-            
+
         FROM evaluation_results e
         JOIN queries q ON e.query_id = q.query_id
         JOIN models ma ON e.model_a_id = ma.model_id
