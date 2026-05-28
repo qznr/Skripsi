@@ -58,56 +58,187 @@
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="header-actions">
-      <div>
-        <h1>Evaluation Data Dashboard</h1>
-        <div class="stats">Total Submitted Votes: {{ total_votes }}</div>
-      </div>
-      <a href="/admin/export" class="btn">⬇ Download CSV</a>
+    <div class="wrap">
+        <div class="header-actions">
+          <div>
+            <h1>Evaluation Data Dashboard</h1>
+            <div class="stats">
+                Human Votes: {{ stats.human_votes }} | 
+                LLM (Gemini) Votes: {{ stats.llm_votes }}
+            </div>
+          </div>
+          <a href="/admin/export" class="btn">⬇ Download CSV</a>
+        </div>
+    
+        <!-- LLM BENCHMARK SECTION -->
+        <h2 style="color: #555; margin-top: 40px;">LLM Benchmarks (Gemini Judge)</h2>
+        <div style="overflow-x: auto;">
+          <table class="datatable">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Query</th>
+                <th>A vs B (Latency)</th>
+                <th>Outcome</th>
+                <th>Judge Reasoning</th>
+                <th>Expert Lists Comparison</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for e in llm_evals %}
+              <tr>
+                <td>{{ e.evaluation_id }}</td>
+                <td><strong>{{ e.query_text }}</strong><br><small>{{ e.evaluator_model }}</small></td>
+                <td>
+                    <b>A: {{ e.model_a }}</b> ({{ "%.3f"|format(e.a_total or 0) }}s)<br>
+                    <b>B: {{ e.model_b }}</b> ({{ "%.3f"|format(e.b_total or 0) }}s)<br>
+                    <details style="margin-top: 6px;">
+                        <summary style="font-size: 12px; cursor: pointer; color: var(--accent);">View Breakdown</summary>
+                        <div style="font-size: 11px; background: #f8f9fa; padding: 6px; border-radius: 4px; margin-top: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <div>
+                                <b>Model A</b><br>
+                                S1 (Embed): {{ "%.4f"|format(e.a_step1 or 0) }}s<br>
+                                S2 (Shortlist): <span style="color:red">{{ "%.4f"|format(e.a_step2 or 0) }}s</span><br>
+                                S3 (Rerank): <span style="color:red">{{ "%.4f"|format(e.a_step3 or 0) }}s</span><br>
+                                S4 (Fetch): {{ "%.4f"|format(e.a_step4 or 0) }}s<br>
+                                S5 (Agg): {{ "%.4f"|format(e.a_step5 or 0) }}s<br>
+                                S6 (Fmt): {{ "%.4f"|format(e.a_step6 or 0) }}s
+                            </div>
+                            <div>
+                                <b>Model B</b><br>
+                                S1 (Embed): {{ "%.4f"|format(e.b_step1 or 0) }}s<br>
+                                S2 (Shortlist): <span style="color:red">{{ "%.4f"|format(e.b_step2 or 0) }}s</span><br>
+                                S3 (Rerank): <span style="color:red">{{ "%.4f"|format(e.b_step3 or 0) }}s</span><br>
+                                S4 (Fetch): {{ "%.4f"|format(e.b_step4 or 0) }}s<br>
+                                S5 (Agg): {{ "%.4f"|format(e.b_step5 or 0) }}s<br>
+                                S6 (Fmt): {{ "%.4f"|format(e.b_step6 or 0) }}s
+                            </div>
+                        </div>
+                    </details>
+                </td>
+                <td>
+                    {% if e.winner == 'Draw' %}<span class="badge-draw">Draw</span>
+                    {% elif e.winner == 'Not Voted' %}<span class="badge-none">Failed</span>
+                    {% else %}<span class="badge-win">{{ e.winner }}</span>{% endif %}
+                </td>
+                <td>
+                    <details>
+                        <summary style="cursor:pointer; color: var(--accent);">View Reasoning</summary>
+                        <p style="font-size: 12px; background: #f0f4f8; padding: 8px; border-radius: 4px;">
+                            {{ e.reasoning }}
+                        </p>
+                    </details>
+                </td>
+                <td>
+                    <details>
+                        <summary style="cursor: pointer; color: var(--accent); font-weight: bold;">View Experts</summary>
+                        <div style="font-size: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 8px; background: #fafafa; padding: 10px; border-radius: 6px;">
+                            <div>
+                                <b style="color:var(--accent);">List A ({{ e.model_a }}):</b><br>
+                                {% for exp in e.experts_list %}
+                                    {% if exp.model_id == e.model_a_id %}
+                                        {{ exp.rank }}. {{ exp.name }}<br>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                            <div>
+                                <b style="color:var(--accent);">List B ({{ e.model_b }}):</b><br>
+                                {% for exp in e.experts_list %}
+                                    {% if exp.model_id == e.model_b_id %}
+                                        {{ exp.rank }}. {{ exp.name }}<br>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </details>
+                </td>                
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+    
+        <!-- HUMAN EVALUATION SECTION -->
+        <h2 style="color: #555; margin-top: 60px;">Human Evaluations</h2>
+        <div style="overflow-x: auto;">
+          <table class="datatable">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Date</th>
+                <th>Query</th>
+                <th>A vs B (Latency)</th>
+                <th>Outcome</th>
+                <th>Expert Lists Comparison</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for e in human_evals %}
+              <tr>
+                <td>{{ e.evaluation_id }}</td>
+                <td>{{ e.created_at.strftime('%m-%d %H:%M') }}</td>
+                <td><strong>{{ e.query_text }}</strong></td>
+                <td>
+                    <b>A: {{ e.model_a }}</b> ({{ "%.3f"|format(e.a_total or 0) }}s)<br>
+                    <b>B: {{ e.model_b }}</b> ({{ "%.3f"|format(e.b_total or 0) }}s)<br>
+                    <details style="margin-top: 6px;">
+                        <summary style="font-size: 12px; cursor: pointer; color: var(--accent);">View Breakdown</summary>
+                        <div style="font-size: 11px; background: #f8f9fa; padding: 6px; border-radius: 4px; margin-top: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <div>
+                                <b>Model A</b><br>
+                                S1 (Embed): {{ "%.4f"|format(e.a_step1 or 0) }}s<br>
+                                S2 (Shortlist): <span style="color:red">{{ "%.4f"|format(e.a_step2 or 0) }}s</span><br>
+                                S3 (Rerank): <span style="color:red">{{ "%.4f"|format(e.a_step3 or 0) }}s</span><br>
+                                S4 (Fetch): {{ "%.4f"|format(e.a_step4 or 0) }}s<br>
+                                S5 (Agg): {{ "%.4f"|format(e.a_step5 or 0) }}s<br>
+                                S6 (Fmt): {{ "%.4f"|format(e.a_step6 or 0) }}s
+                            </div>
+                            <div>
+                                <b>Model B</b><br>
+                                S1 (Embed): {{ "%.4f"|format(e.b_step1 or 0) }}s<br>
+                                S2 (Shortlist): <span style="color:red">{{ "%.4f"|format(e.b_step2 or 0) }}s</span><br>
+                                S3 (Rerank): <span style="color:red">{{ "%.4f"|format(e.b_step3 or 0) }}s</span><br>
+                                S4 (Fetch): {{ "%.4f"|format(e.b_step4 or 0) }}s<br>
+                                S5 (Agg): {{ "%.4f"|format(e.b_step5 or 0) }}s<br>
+                                S6 (Fmt): {{ "%.4f"|format(e.b_step6 or 0) }}s
+                            </div>
+                        </div>
+                    </details>
+                </td>
+                <td>
+                    {% if e.winner == 'Draw' %}<span class="badge-draw">Draw</span>
+                    {% elif e.winner == 'Not Voted' %}<span class="badge-none">Skipped</span>
+                    {% else %}<span class="badge-win">{{ e.winner }}</span>{% endif %}
+                </td>
+                <td>
+                    <details>
+                        <summary style="cursor: pointer; color: var(--accent); font-weight: bold;">View Experts</summary>
+                        <div style="font-size: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 8px; background: #fafafa; padding: 10px; border-radius: 6px;">
+                            <div>
+                                <b style="color:var(--accent);">List A ({{ e.model_a }}):</b><br>
+                                {% for exp in e.experts_list %}
+                                    {% if exp.model_id == e.model_a_id %}
+                                        {{ exp.rank }}. {{ exp.name }}<br>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                            <div>
+                                <b style="color:var(--accent);">List B ({{ e.model_b }}):</b><br>
+                                {% for exp in e.experts_list %}
+                                    {% if exp.model_id == e.model_b_id %}
+                                        {{ exp.rank }}. {{ exp.name }}<br>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </details>
+                </td>                
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
     </div>
-
-    <div style="overflow-x: auto;">
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Date</th>
-            <th>Query</th>
-            <th>Model A (Lat)</th>
-            <th>Model B (Lat)</th>
-            <th>Identical?</th>
-            <th>Outcome</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for e in evaluations %}
-          <tr>
-            <td>{{ e.evaluation_id }}</td>
-            <td>{{ e.created_at.strftime('%Y-%m-%d %H:%M') if e.created_at else '' }}</td>
-            <td><strong>{{ e.query_text }}</strong></td>
-            <td>{{ e.model_a }} <br><small>({{ "%.3f"|format(e.latency_a_sec) }}s)</small></td>
-            <td>{{ e.model_b }} <br><small>({{ "%.3f"|format(e.latency_b_sec) }}s)</small></td>
-            <td>{{ 'Yes' if e.results_identical else 'No' }}</td>
-            <td>
-              {% if e.winner == 'Draw' %}
-                <span class="badge-draw">Draw</span>
-              {% elif e.winner == 'Not Voted' %}
-                <span class="badge-none">Not Voted</span>
-              {% else %}
-                <span class="badge-win">{{ e.winner }}</span>
-              {% endif %}
-            </td>
-          </tr>
-          {% else %}
-          <tr>
-            <td colspan="7" style="text-align: center;">No evaluation data found yet.</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
   <script>
     $(document).ready(function() {
       $('table').DataTable({

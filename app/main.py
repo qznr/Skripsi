@@ -161,24 +161,47 @@ def requires_auth(f):
     return decorated
 
 def get_denormalized_evaluations():
-    """Helper function to fetch the flattened evaluation data."""
     conn = get_db()
     query = """
         SELECT 
-            e.evaluation_id,
-            q.query_text,
-            ma.model_name AS model_a,
-            mb.model_name AS model_b,
-            CAST(e.latency_a->>'total_search_time' AS FLOAT) AS latency_a_sec,
-            CAST(e.latency_b->>'total_search_time' AS FLOAT) AS latency_b_sec,
-            e.results_identical,
-            e.preference_submitted,
+            e.evaluation_id, q.query_text,
+            ma.model_name AS model_a, mb.model_name AS model_b,
+            ma.model_id AS model_a_id, mb.model_id AS model_b_id,
+            
+            -- LATENCY STEPS (A)
+            CAST(e.latency_a->>'step1_embedding' AS FLOAT) AS a_step1,
+            CAST(e.latency_a->>'step2_shortlisting' AS FLOAT) AS a_step2,
+            CAST(e.latency_a->>'step3_reranking' AS FLOAT) AS a_step3,
+            CAST(e.latency_a->>'step4_fetch_details' AS FLOAT) AS a_step4,
+            CAST(e.latency_a->>'step5_score_aggregation' AS FLOAT) AS a_step5,
+            CAST(e.latency_a->>'step6_final_format' AS FLOAT) AS a_step6,
+            CAST(e.latency_a->>'total_search_time' AS FLOAT) AS a_total,
+            
+            -- LATENCY STEPS (B)
+            CAST(e.latency_b->>'step1_embedding' AS FLOAT) AS b_step1,
+            CAST(e.latency_b->>'step2_shortlisting' AS FLOAT) AS b_step2,
+            CAST(e.latency_b->>'step3_reranking' AS FLOAT) AS b_step3,
+            CAST(e.latency_b->>'step4_fetch_details' AS FLOAT) AS b_step4,
+            CAST(e.latency_b->>'step5_score_aggregation' AS FLOAT) AS b_step5,
+            CAST(e.latency_b->>'step6_final_format' AS FLOAT) AS b_step6,
+            CAST(e.latency_b->>'total_search_time' AS FLOAT) AS b_total,
+
+            e.results_identical, e.preference_submitted, e.evaluator_type, e.evaluator_model, e.reasoning,
             CASE 
                 WHEN e.preference_submitted = FALSE THEN 'Not Voted'
                 WHEN e.winner_model_id IS NULL THEN 'Draw'
                 ELSE mw.model_name 
             END as winner,
-            e.created_at
+            e.created_at,
+            
+            -- BUNDLED EXPERT RESULTS (JSONB)
+            (
+                SELECT json_agg(json_build_object('rank', er.rank_position, 'name', au.full_name, 'model_id', er.model_id))
+                FROM expert_results er
+                JOIN authors au ON er.author_id = au.author_id
+                WHERE er.evaluation_id = e.evaluation_id
+            ) AS experts_list
+            
         FROM evaluation_results e
         JOIN queries q ON e.query_id = q.query_id
         JOIN models ma ON e.model_a_id = ma.model_id
@@ -193,46 +216,52 @@ def get_denormalized_evaluations():
 @bp.route('/admin')
 @requires_auth
 def admin_dashboard():
-    """Renders the HTML table of the evaluation data."""
-    evaluations = get_denormalized_evaluations()
+    """Renders the HTML table, separated by evaluator type."""
+    all_evals = get_denormalized_evaluations()
     
-    total_votes = sum(1 for e in evaluations if e['preference_submitted'])
+    human_evals = [e for e in all_evals if e['evaluator_type'] == 'human']
+    llm_evals = [e for e in all_evals if e['evaluator_type'] == 'llm']
     
-    return render_template('admin.html', evaluations=evaluations, total_votes=total_votes)
+    stats = {
+        "human_votes": sum(1 for e in human_evals if e['preference_submitted']),
+        "llm_votes": sum(1 for e in llm_evals if e['preference_submitted'])
+    }
+    
+    return render_template('admin.html', 
+                           human_evals=human_evals, 
+                           llm_evals=llm_evals, 
+                           stats=stats)
 
 @bp.route('/admin/export')
 @requires_auth
 def export_csv():
-    """Generates and downloads the data as a CSV file."""
+    """Generates and downloads the data as a CSV file with full latency breakdown."""
     evaluations = get_denormalized_evaluations()
     
-    # Create an in-memory string buffer
     si = io.StringIO()
     cw = csv.writer(si)
     
-    # Write the header
+    # Write the header (Extremely detailed for SPSS/ANOVA)
     cw.writerow([
         'Evaluation ID', 'Created At', 'Query', 'Model A', 'Model B', 
-        'Latency A (s)', 'Latency B (s)', 'Results Identical', 
-        'Preference Submitted', 'Winner'
+        'A_Step1_Embedding', 'A_Step2_Shortlist', 'A_Step3_Rerank', 
+        'A_Step4_FetchDB', 'A_Step5_Aggregate', 'A_Step6_Format', 'A_Total',
+        'B_Step1_Embedding', 'B_Step2_Shortlist', 'B_Step3_Rerank', 
+        'B_Step4_FetchDB', 'B_Step5_Aggregate', 'B_Step6_Format', 'B_Total',
+        'Results Identical', 'Evaluator Type', 'Preference Submitted', 'Winner', 'Reasoning'
     ])
     
-    # Write the data rows
+    def r(val):
+        return round(val, 6) if val is not None else ''
+
     for e in evaluations:
         cw.writerow([
-            e['evaluation_id'],
-            e['created_at'],
-            e['query_text'],
-            e['model_a'],
-            e['model_b'],
-            round(e['latency_a_sec'], 4) if e['latency_a_sec'] else '',
-            round(e['latency_b_sec'], 4) if e['latency_b_sec'] else '',
-            e['results_identical'],
-            e['preference_submitted'],
-            e['winner']
+            e['evaluation_id'], e['created_at'], e['query_text'], e['model_a'], e['model_b'],
+            r(e['a_step1']), r(e['a_step2']), r(e['a_step3']), r(e['a_step4']), r(e['a_step5']), r(e['a_step6']), r(e['a_total']),
+            r(e['b_step1']), r(e['b_step2']), r(e['b_step3']), r(e['b_step4']), r(e['b_step5']), r(e['b_step6']), r(e['b_total']),
+            e['results_identical'], e['evaluator_type'], e['preference_submitted'], e['winner'], e['reasoning']
         ])
     
-    # Return the generated CSV as a downloadable file
     output = Response(si.getvalue(), mimetype='text/csv')
-    output.headers["Content-Disposition"] = "attachment; filename=evaluations_export.csv"
+    output.headers["Content-Disposition"] = "attachment; filename=evaluations_full_metrics.csv"
     return output

@@ -1,14 +1,19 @@
 import asyncio
+import json
 import os
 import re
 import click
 import pandas as pd
 from flask import Blueprint
 from db import get_db
-from psycopg2.extras import execute_values
+from psycopg2.extras import execute_values, RealDictCursor
 from pgvector.psycopg2 import register_vector
 from tqdm import tqdm
-from vectorizer import get_embeddings
+from services import find_experts, save_evaluation_results
+from vectorizer import get_embeddings, get_single_embedding
+import itertools
+from llm_judge import evaluate_with_gemini, MODEL_NAME
+import time
 
 bp = Blueprint('commands', __name__)
 
@@ -339,6 +344,8 @@ def upgrade_schema_command():
     ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS evaluator_type VARCHAR(50) DEFAULT 'human';
     ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS evaluator_model VARCHAR(100);
     ALTER TABLE evaluation_results ADD COLUMN IF NOT EXISTS reasoning TEXT;
+
+    ALTER TABLE expert_results ADD COLUMN IF NOT EXISTS model_id INT REFERENCES models(model_id);
     """
     
     try:
@@ -352,3 +359,108 @@ def upgrade_schema_command():
     except Exception as e:
         click.echo(f"An error occurred during schema upgrade: {e}")
         db_conn.rollback()
+
+async def _run_benchmark():
+    conn = get_db()
+    
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT q.query_text, model_a_id, model_b_id FROM evaluation_results e JOIN queries q ON e.query_id = q.query_id WHERE evaluator_type = 'llm';")
+        existing_matches = {(row[0], row[1], row[2]) for row in cursor.fetchall()}
+
+    with open('/app/data/benchmark_queries.json', 'r') as f:
+        queries = json.load(f)
+        
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute("SELECT model_id, model_name FROM models ORDER BY model_id;")
+        all_models = cursor.fetchall()
+        
+    model_pairs = list(itertools.combinations(all_models, 2))
+    
+    for q_idx, query_text in enumerate(queries):
+        # Prefetch Query Embedding
+        prefixed_query = f"search_query: {query_text}"
+        query_embedding = await get_single_embedding(prefixed_query)
+        
+        print(f"\n=======================================================")
+        print(f"Testing [{q_idx+1}/{len(queries)}] Query: '{query_text}'")
+        print(f"=======================================================")
+
+        # ---------------------------------------------------------
+        # STEP 1: ISOLATED TIMING RUN (One per dimension)
+        # ---------------------------------------------------------
+        # We run the DB search exactly ONCE per model for this query
+        # to ensure fair, real-world latency metrics without loop-cache bias.
+        
+        query_results_cache = {}
+        query_metrics_cache = {}
+        
+        for model in all_models:
+            dims = int(model['model_name'].split('_')[0])
+            res, met = await find_experts(query_text, dims, 100)
+            
+            query_results_cache[model['model_id']] = res
+            query_metrics_cache[model['model_id']] = met
+            
+        # ---------------------------------------------------------
+        # STEP 2: GEMINI JUDGING (Using the isolated data)
+        # ---------------------------------------------------------
+        for pair_idx, (model_a, model_b) in enumerate(model_pairs):
+            
+            # --- SKIP CHECK ---
+            if (query_text, model_a['model_id'], model_b['model_id']) in existing_matches:
+                print(f"  [Skipping] {model_a['model_name']} vs {model_b['model_name']} - Already judged.")
+                continue
+
+            print(f"\n  [Pairing] {model_a['model_name']} vs {model_b['model_name']}")
+            
+            # Retrieve the cleanly timed data from our Python dictionary
+            results_a = query_results_cache[model_a['model_id']]
+            metrics_a = query_metrics_cache[model_a['model_id']]
+            
+            results_b = query_results_cache[model_b['model_id']]
+            metrics_b = query_metrics_cache[model_b['model_id']]
+            
+            results_identical = (results_a == results_b)
+            
+            # Call Gemini
+            print("    -> Waiting for Gemini Judge...")
+            gemini_response = evaluate_with_gemini(query_text, results_a, results_b)
+            
+            choice = gemini_response.get("choice")
+            reasoning = gemini_response.get("reasoning")
+            
+            winner_id = None
+            preference_submitted = False
+            
+            if choice:
+                preference_submitted = True
+                print(f"    -> Gemini Voted: {choice.upper()} | Reason: {reasoning[:60]}...")
+                if choice == 'a': winner_id = model_a['model_id']
+                elif choice == 'b': winner_id = model_b['model_id']
+            else:
+                print(f"    -> Gemini FAILED. Skipping recording for this match.")
+                time.sleep(30) 
+                continue 
+
+            # --- SAVE DATA USING THE UNIFIED HELPER ---
+            eval_id = save_evaluation_results(
+                conn, query_embedding, query_text, model_a, model_b,
+                results_a, results_b, metrics_a, metrics_b,
+                evaluator_type='llm', evaluator_model=MODEL_NAME, reasoning=reasoning
+            )
+            
+            # If Gemini picked a winner, update the database record with the winner_id
+            if winner_id:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE evaluation_results SET winner_model_id = %s WHERE evaluation_id = %s;",
+                        (winner_id, eval_id)
+                    )
+                conn.commit()
+
+    print("\nBenchmark Process Finished.")
+
+@bp.cli.command('run-benchmark')
+def run_benchmark_command():
+    """Automates the LLM-as-a-Judge evaluation across all dimension pairs."""
+    asyncio.run(_run_benchmark())

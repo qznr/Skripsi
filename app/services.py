@@ -212,7 +212,7 @@ async def run_pairwise_search(query_text: str):
     results_b, metrics_b = results_b_tuple
 
     # --- Save Results ---
-    evaluation_id = _save_evaluation_results(
+    evaluation_id = save_evaluation_results(
         conn, query_embedding, query_text, 
         model_a_data, model_b_data, 
         results_a, results_b, 
@@ -233,9 +233,12 @@ async def run_pairwise_search(query_text: str):
         }
     }
 
-def _save_evaluation_results(conn, query_embedding, query_text, model_a_data, model_b_data, results_a, results_b, metrics_a, metrics_b):
+def save_evaluation_results(conn, query_embedding, query_text, model_a_data, model_b_data, 
+                            results_a, results_b, metrics_a, metrics_b, 
+                            evaluator_type='human', evaluator_model=None, reasoning=None):
     """
-    Saves the entire evaluation structure using JSONB for latency metrics.
+    Saves the entire evaluation structure to the database.
+    Used by both human web interactions and automated CLI benchmarks.
     """
     with conn.cursor() as cursor:
         # 1. Save Query
@@ -243,40 +246,43 @@ def _save_evaluation_results(conn, query_embedding, query_text, model_a_data, mo
                        (query_text, query_embedding))
         query_id = cursor.fetchone()[0]
 
-        # 2. Save Evaluation (Winner is Null initially)
+        # 2. Save Evaluation (Winner is Null initially or if Draw)
         evaluation_sql = """
             INSERT INTO evaluation_results 
             (query_id, model_a_id, model_b_id, 
-             latency_a, latency_b, 
-             results_identical) 
-            VALUES (%s, %s, %s, %s, %s, %s) 
+             latency_a, latency_b, results_identical,
+             evaluator_type, evaluator_model, reasoning, preference_submitted) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) 
             RETURNING evaluation_id;
         """
         results_identical = (results_a == results_b)
         
-        # Convert metrics dictionaries to JSON strings for JSONB insertion
         latency_a_json = json.dumps(metrics_a)
         latency_b_json = json.dumps(metrics_b)
         
         cursor.execute(evaluation_sql, (
             query_id, model_a_data['model_id'], model_b_data['model_id'], 
-            latency_a_json, latency_b_json,
-            results_identical
+            latency_a_json, latency_b_json, results_identical,
+            evaluator_type, evaluator_model, reasoning,
+            True if evaluator_type == 'llm' else False # Humans haven't voted yet, LLM has
         ))
         evaluation_id = cursor.fetchone()[0]
         
-        # Helper to process and save expert results for one model
-        def save_model_results(results):
+        # Helper to process and save expert results with the model_id
+        def save_model_results(results, model_id):
+            if not results:
+                return
+                
             expert_results_values = []
             article_expert_results_values = []
             
             # 3. Prepare Expert Results
             for rank, expert in enumerate(results):
-                expert_results_values.append((evaluation_id, expert['author_id'], rank + 1))
+                expert_results_values.append((evaluation_id, expert['author_id'], rank + 1, model_id))
             
-            # Bulk insert expert results to get the generated result_id
+            # Bulk insert expert results to get the generated result_ids
             expert_insert_sql = """
-                INSERT INTO expert_results (evaluation_id, author_id, rank_position) 
+                INSERT INTO expert_results (evaluation_id, author_id, rank_position, model_id) 
                 VALUES %s 
                 RETURNING result_id, author_id;
             """
@@ -304,13 +310,13 @@ def _save_evaluation_results(conn, query_embedding, query_text, model_a_data, mo
                 """
                 execute_values(cursor, article_insert_sql, article_expert_results_values)
 
-        # Save results for both models
-        save_model_results(results_a)
-        save_model_results(results_b)
+        # Save results for both models using their respective IDs
+        save_model_results(results_a, model_a_data['model_id'])
+        save_model_results(results_b, model_b_data['model_id'])
 
         conn.commit()
         return evaluation_id
-    
+        
 def record_preference(evaluation_id: int, choice: str):
     """
     Updates the evaluation_results table with the user's choice.

@@ -1,10 +1,11 @@
 import os
 import json
 import time
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-# Configure the API key
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+# Gemini Client
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 # Use the fast, free tier model
 MODEL_NAME = "gemini-3.5-flash"
@@ -43,13 +44,17 @@ def evaluate_with_gemini(query, results_a, results_b):
     {{"choice": "a", "reasoning": "Brief explanation of why A is better."}}
     """
 
-    # We enforce JSON output to make it easy to parse
-    model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"})
-    
-    max_retries = 3
+    max_retries = 5
     for attempt in range(max_retries):
         try:
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type='application/json',
+                    temperature=0.1
+                )
+            )
             result = json.loads(response.text)
             
             # Validate output
@@ -59,7 +64,11 @@ def evaluate_with_gemini(query, results_a, results_b):
             return result
             
         except Exception as e:
-            print(f"Gemini API Error (Attempt {attempt+1}): {e}")
-            time.sleep(5) # Wait 5 seconds before retrying (Exponential Backoff)
+            if "429" in str(e):
+                print(f"  !! Rate limit hit. Waiting 60 seconds... (Attempt {attempt+1})")
+                time.sleep(60)
+            else:
+                print(f"  !! API Error: {e}. Waiting 10s...")
+                time.sleep(10)
             
-    return {"choice": "draw", "reasoning": "API failed after multiple retries."}
+    return {"choice": None, "reasoning": "API failed after multiple retries."}
