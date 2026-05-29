@@ -7,8 +7,7 @@ from google.genai import types
 # Gemini Client
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# Use the fast, free tier model
-MODEL_NAME = "gemini-3.5-flash"
+MODEL_NAME = "gemma-4-31b-it"
 
 def format_experts_for_prompt(experts_list):
     """Formats the expert list into a readable string for the LLM."""

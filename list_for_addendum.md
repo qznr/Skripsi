@@ -72,4 +72,6 @@ This is a comprehensive "Technical Cheat Sheet" for your defense. I’ve organiz
 3.  **Solution:** "I implemented **Matryoshka Embeddings**. This allowed me to use a 'Two-Stage' search: a very fast 'shortlist' phase using small vector slices (e.g., 128 dimensions), followed by a high-precision rerank."
 4.  **Result:** "I deployed this via a secure Docker-based microservice stack and evaluated the quality using a Blind Pairwise Test, calculating Elo ratings to prove that lower dimensions can achieve near-perfect accuracy with significantly lower latency."
 
-**Print this out or keep it on your phone during the defense—you now have the answer to every 'How' and 'Why' they can throw at you.**
+FAQs:
+1. Dataset for query like scifact scidocs kurang relevan, perlu query yg problem solving daripada yg simple retrieval
+2. Why citation count as query anchor? cuz impact and much better than selecting random papers 

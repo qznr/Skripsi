@@ -493,7 +493,6 @@ async def _run_benchmark():
             
             query_results_cache[model['model_id']] = res
             query_metrics_cache[model['model_id']] = met
-            time.sleep(1) 
             
         # ---------------------------------------------------------
         # STEP 2: GEMINI JUDGING (Using the isolated data)
@@ -551,7 +550,7 @@ async def _run_benchmark():
                         (winner_id, eval_id)
                     )
                 conn.commit()
-            time.sleep(5)
+            time.sleep(4)
 
     print("\nBenchmark Process Finished.")
 
