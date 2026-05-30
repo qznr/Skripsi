@@ -81,7 +81,7 @@ async def find_experts(
         # We need to calculate the final similarity score (which is just the initial score)
         # and set the top_ranked_ids/score_map based on the initial retrieval.
         top_ranked_ids = [doc['article_id'] for doc in initial_candidates]
-        score_map = {doc['article_id']: doc['raw_distance'] for doc in initial_candidates}
+        score_map = {doc['article_id']: (1.0 - doc['raw_distance']) for doc in initial_candidates} # 1 - distance to convert to similarity score
 
     # === STEP 4: Fetch Author and Article Data for Aggregation ===
     start_step4 = time.perf_counter()
